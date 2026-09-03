@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Demo — Cambio de vista</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+
+  :root {
+    --tinta: #1E2A38;
+    --papel: #EDEEE7;
+    --papel-alt: #E2E4DA;
+    --laton: #9C7A3C;
+    --verde-ledger: #3B5D50;
+    --pizarra: #6B7280;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--papel);
+    color: var(--tinta);
+    font-family: 'Inter', sans-serif;
+    padding: 48px;
+    min-height: 100vh;
+  }
+
+  .app-shell { max-width: 640px; margin: 0 auto; }
+
+  h1 {
+    font-family: 'Source Serif 4', serif;
+    font-weight: 700;
+    font-size: 28px;
+    margin: 0 0 4px 0;
+  }
+
+  .subtitulo {
+    color: var(--pizarra);
+    font-size: 13px;
+    margin: 0 0 24px 0;
+  }
+
+  input#buscador {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 14px;
+    background: white;
+    border: 1px solid var(--papel-alt);
+    border-radius: 3px;
+    outline: none;
+    margin-bottom: 20px;
+    font-family: 'Inter', sans-serif;
+  }
+  input#buscador:focus { border-color: var(--laton); }
+
+  ul#lista-clientes { list-style: none; margin: 0; padding: 0; }
+
+  .cliente-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: white;
+    border: 1px solid var(--papel-alt);
+    border-radius: 3px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.1s ease;
+  }
+  .cliente-card:hover { border-color: var(--laton); transform: translateX(2px); }
+
+  .sello {
+    width: 34px; height: 34px; min-width: 34px;
+    border-radius: 50%;
+    background: var(--tinta); color: var(--papel);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Source Serif 4', serif; font-weight: 700; font-size: 14px;
+    border: 2px solid var(--laton);
+  }
+
+  .cliente-nombre { font-weight: 600; font-size: 15px; margin: 0 0 2px 0; }
+  .cliente-id { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--pizarra); }
+  .cliente-id .tipo { color: var(--laton); font-weight: 500; }
+
+  .volver {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--pizarra); font-size: 13px; text-decoration: none;
+    margin-bottom: 20px; cursor: pointer; background:none; border:none; padding:0;
+    font-family: 'Inter', sans-serif;
+  }
+  .volver:hover { color: var(--tinta); }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--papel-alt); margin-bottom: 20px; }
+  .tab {
+    padding: 10px 16px; font-size: 13px; font-weight: 500;
+    color: var(--pizarra); border-bottom: 2px solid transparent;
+    cursor: pointer; background: none; border-top:none; border-left:none; border-right:none;
+    font-family: 'Inter', sans-serif;
+  }
+  .tab.activa { font-weight: 600; color: var(--tinta); border-bottom-color: var(--laton); }
+
+  .nota-demo {
+    margin-top: 32px; padding: 14px 16px;
+    background: var(--papel-alt); border-left: 3px solid var(--laton);
+    border-radius: 2px; font-size: 13px; color: var(--pizarra); line-height: 1.5;
+  }
+  .nota-demo code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--tinta); }
+</style>
+</head>
+<body>
+  <div class="app-shell">
+
+    <div id="vista-lista">
+      <h1>Clientes</h1>
+      <p class="subtitulo">Haz click en cualquier cliente para ver el detalle</p>
+      <input type="text" id="buscador" placeholder="Buscar por nombre o identificación…">
+      <ul id="lista-clientes"></ul>
+    </div>
+
+    <div id="vista-detalle" style="display: none;">
+      <button class="volver" id="btn-volver">← Volver a clientes</button>
+      <div style="display:flex; align-items:center; gap:14px; margin-bottom: 24px;">
+        <div class="sello" style="width:48px;height:48px;font-size:18px;" id="detalle-sello"></div>
+        <div>
+          <h1 style="font-size:22px;" id="detalle-nombre"></h1>
+          <p class="cliente-id" id="detalle-id"></p>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab activa" data-tab="info">Información del cliente</button>
+        <button class="tab" data-tab="datos">Datos añadidos</button>
+      </div>
+      <p style="font-size:13px; color:var(--pizarra);" id="detalle-contenido">Aquí irían los archivos de "Información del cliente".</p>
+    </div>
+
+    <div class="nota-demo">
+      Esto es una <strong>demo del concepto</strong>, no tu código real. Fíjate: el click en un cliente oculta <code>#vista-lista</code> y muestra <code>#vista-detalle</code> — sin recargar nada, sin cambiar de archivo HTML.
+    </div>
+  </div>
+
+<script>
+  const clientes = [
+    { nombre: "Juan Pérez", tipoIdentificacion: "CC", identificacion: "123456" },
+    { nombre: "María López", tipoIdentificacion: "CE", identificacion: "789012" },
+    { nombre: "Carlos Ruiz", tipoIdentificacion: "CC", identificacion: "456789" },
+  ];
+
+  const contenedor = document.getElementById("lista-clientes");
+  const buscador = document.getElementById("buscador");
+  const vistaLista = document.getElementById("vista-lista");
+  const vistaDetalle = document.getElementById("vista-detalle");
+
+  function iniciales(nombre) {
+    return nombre.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
+  }
+
+  function renderizarLista(listaClientes) {
+    contenedor.innerHTML = listaClientes.map((cliente) => `
+      <li class="cliente-card" data-id="${cliente.identificacion}">
+        <div class="sello">${iniciales(cliente.nombre)}</div>
+        <div>
+          <p class="cliente-nombre">${cliente.nombre}</p>
+          <p class="cliente-id"><span class="tipo">${cliente.tipoIdentificacion}</span> · ${cliente.identificacion}</p>
+        </div>
+      </li>
+    `).join("");
+  }
+
+  // --- Event delegation: un solo listener en el <ul>, no uno por <li> ---
+  contenedor.addEventListener("click", (event) => {
+    const card = event.target.closest(".cliente-card");
+    if (!card) return; // click fuera de una tarjeta, ignorar
+
+    const id = card.dataset.id; // leemos el atributo data-id
+    const cliente = clientes.find(c => c.identificacion === id);
+
+    mostrarDetalle(cliente);
+  });
+
+  function mostrarDetalle(cliente) {
+    document.getElementById("detalle-sello").textContent = iniciales(cliente.nombre);
+    document.getElementById("detalle-nombre").textContent = cliente.nombre;
+    document.getElementById("detalle-id").innerHTML = `<span class="tipo">${cliente.tipoIdentificacion}</span> · ${cliente.identificacion}`;
+
+    vistaLista.style.display = "none";
+    vistaDetalle.style.display = "block";
+  }
+
+  document.getElementById("btn-volver").addEventListener("click", () => {
+    vistaDetalle.style.display = "none";
+    vistaLista.style.display = "block";
+  });
+
+  // Tabs (solo visual en esta demo)
+  document.querySelectorAll(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("activa"));
+      tab.classList.add("activa");
+      document.getElementById("detalle-contenido").textContent =
+        tab.dataset.tab === "info"
+          ? 'Aquí irían los archivos de "Información del cliente".'
+          : 'Aquí irían los archivos de "Datos añadidos".';
+    });
+  });
+
+  buscador.addEventListener("input", () => {
+    const texto = buscador.value.toLowerCase();
+    const filtrados = clientes.filter(c =>
+      c.nombre.toLowerCase().includes(texto) || c.identificacion.includes(texto)
+    );
+    renderizarLista(filtrados);
+  });
+
+  renderizarLista(clientes);
+</script>
+</body>
+</html>

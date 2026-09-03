@@ -1,0 +1,4 @@
+node_modules/
+credenciales.json
+token-google.json
+api-key-picker.json

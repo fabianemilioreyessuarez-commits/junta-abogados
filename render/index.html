@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clientes</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="vista-lista">
+        <h1>Clientes</h1>
+        <input type="text" id="buscador" placeholder="Buscar por nombre o identificación...">
+        <button id="btn-nuevo-cliente">+ Nuevo cliente</button>
+        <button id="btn-ver-papelera"> Ver papelera</button>
+        <ul id="lista-clientes"></ul>
+    </div>
+
+    <div id="vista-papelera" style="display: none;">
+        <button id="btn-volver-papelera">← Volver</button>
+        <h2>Papelera</h2>
+        <ul id="lista-papelera"></ul>
+    </div>
+
+    <div id="vista-nuevo-cliente" style="display: none;">
+        <button id="btn-cancelar-nuevo">← Cancelar</button>
+        <h2 id="titulo-form-cliente">Nuevo cliente</h2>
+
+        <form id="form-nuevo-cliente">
+            <label>Nombre completo:
+                <input type="text" id="nc-nombre" required>
+            </label>
+            <label>Tipo de identificación:
+                <select id="nc-tipo-identificacion" required>
+                    <option value="CC">Cédula de Ciudadanía</option>
+                    <option value="CE">Cédula de Extranjería</option>
+                    <option value="RE">registro civil</option>
+                </select>
+            </label>
+            <label>Identificación:
+                <input type="text" id="nc-identificacion" required>
+            </label>
+            <label>Descripción del caso:
+                <textarea id="nc-descripcion" required></textarea>
+            </label>
+            <button type="submit" id="btn-submit-form-cliente">Crear cliente</button>
+        </form>
+    </div>
+
+    <div id="notario" style="display: none;">
+        <div id="notario-header">Misiones</div>
+        <div id="notario-cuerpo">
+            <ul id="lista-misiones"></ul>
+            <div class="notario-nueva">
+                <input type="text" id="input-mision" placeholder="Nueva misión...">
+                <button id="btn-agregar-mision">Añadir</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="vista-detalle" style="display: none;">
+        <button id="btn-mover-papelera">borrar</button>
+        <button id="btn-editar-cliente">Editar</button>
+        <button id="btn-volver">← Volver</button>
+        <button id="btn-subir-archivo"> Subir archivo</button>
+        <h2 id="detalle-nombre"></h2>
+        <p id="detalle-id"></p>
+
+        <div class="tabs">
+            <button class="tab" data-tab="info">Información del cliente</button>
+            <button class="tab" data-tab="datos">Datos añadidos</button>
+        </div>
+        <div id="detalle-contenido"></div>
+    </div>
+
+    <div id="modal-confirmar-borrado" style="display: none;">
+        <div id="modal-contenido">
+            <p>¿Seguro que quieres borrar este cliente de forma <strong>permanente</strong>? Esta acción no se puede deshacer.</p>
+            <button id="btn-confirmar-borrado">Sí, borrar</button>
+            <button id="btn-cancelar-borrado">Cancelar</button>
+        </div>
+    </div>
+
+    <script type="module" src="ui/init.js"></script>
+</body>
+</html>
