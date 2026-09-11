@@ -13,6 +13,7 @@ const btnCancelarBorrado = document.getElementById("btn-cancelar-borrado");
 
 
 export let UUIDaBorrar= null;
+let operacionEnCurso = false;
 
 export function renderizarPapelera(listaClientes) {
   const html = listaClientes.map((cliente) => {
@@ -46,6 +47,8 @@ listaPapelera.addEventListener("click", async (event) => {
   const UUID = li.dataset.id;
 
   if (event.target.classList.contains("btn-restaurar")) {
+    if (operacionEnCurso) return;
+      operacionEnCurso = true;
     try {
       await window.clientesAPI.restaurarCliente(UUID);
       await iniciar();
@@ -53,6 +56,8 @@ listaPapelera.addEventListener("click", async (event) => {
       renderizarPapelera(clientesEnPapelera);
     } catch (error) {
       console.log("No se pudo restaurar el cliente:", error.message);
+    } finally {
+        operacionEnCurso = false;
     }
   }
 
@@ -63,17 +68,20 @@ listaPapelera.addEventListener("click", async (event) => {
 });
 
 btnConfirmarBorrado.addEventListener("click", async () => {
+  if (operacionEnCurso) return;
+  operacionEnCurso = true;
+
   try {
     await window.clientesAPI.borrarClientePermanente(UUIDaBorrar);
-    modalConfirmarBorrado.style.display = "none";
-    UUIDaBorrar = null;
-
     await iniciar();
     const clientesEnPapelera = clientes.filter((cliente) => cliente.estado === "papelera");
     renderizarPapelera(clientesEnPapelera);
   } catch (error) {
     console.log("No se pudo borrar el cliente:", error.message);
+  } finally {
     modalConfirmarBorrado.style.display = "none";
+    UUIDaBorrar = null;
+    operacionEnCurso = false;
   }
 });
 

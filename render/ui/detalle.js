@@ -1,6 +1,8 @@
 import { vistaLista } from "./lista.js";
 import { iniciar } from "./init.js";
 
+
+
 export const vistaDetalle= document.getElementById("vista-detalle");
 export const btnVolver= document.getElementById("btn-volver");
 export const inputMision = document.getElementById("input-mision");
@@ -9,7 +11,12 @@ export const listaMisiones = document.getElementById("lista-misiones");
 export const notario = document.getElementById("notario");
 export const btnMoverPapelera = document.getElementById("btn-mover-papelera");
 export const btnSubirArchivo = document.getElementById("btn-subir-archivo");
+export const btnSincronizarArchivos = document.getElementById("btn-sincronizar-archivos");
+export const modalSincronizar = document.getElementById("modal-sincronizar");
 
+
+
+let diffPendiente = null;
 let operacionEnCurso = false;
 export let clienteActivo= null;
 export let pestanaActiva = "info"; 
@@ -38,6 +45,7 @@ export function mostrarPestana(nombrePestana) {
     tab.classList.toggle("activa", tab.dataset.tab === nombrePestana);
   })
 };
+
 export function actualizarNotario() {
   listaMisiones.innerHTML= clienteActivo.misiones
   .map((mision) => 
@@ -46,6 +54,14 @@ export function actualizarNotario() {
     `)
     .join(""); 
 };
+
+function renderizarDiff(diff, etiqueta) {
+  const nuevosHtml = diff.nuevos.map((archivo) => `<li>+ ${archivo.name}</li>`).join("");
+  const faltantesHtml = diff.faltantes.map((archivo) => `<li>- ${archivo.nombre}</li>`).join("");
+
+  return `<h4>${etiqueta}</h4><ul>${nuevosHtml}${faltantesHtml}</ul>`;
+}
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     mostrarPestana(tab.dataset.tab);
@@ -68,6 +84,24 @@ btnAgregarMision.addEventListener("click", async () => {
     actualizarNotario();
   } catch (error) {
     console.log("No se pudo agregar la misión:", error.message);
+  }
+});
+
+btnSincronizarArchivos.addEventListener("click", async () => {
+  if (operacionEnCurso) return;
+  operacionEnCurso = true;
+
+  try {
+    diffPendiente = await window.clientesAPI.sincronizarArchivosCliente(clienteActivo.UUID);
+
+    document.getElementById("diff-info").innerHTML = renderizarDiff(diffPendiente.info, "Información del cliente");
+    document.getElementById("diff-datos").innerHTML = renderizarDiff(diffPendiente.datos, "Datos añadidos");
+
+    modalSincronizar.style.display = "flex";
+  } catch (error) {
+    console.log("No se pudo sincronizar:", error.message);
+  } finally {
+    operacionEnCurso = false;
   }
 });
 
@@ -137,4 +171,25 @@ document.getElementById("detalle-contenido").addEventListener("click", async (ev
   } finally {
     operacionEnCurso = false;
   }
+});
+
+document.getElementById("btn-confirmar-sincronizar").addEventListener("click", async () => {
+  if (operacionEnCurso) return;
+  operacionEnCurso = true;
+
+  try {
+    clienteActivo = await window.clientesAPI.aplicarSincronizacion(clienteActivo.UUID);
+    mostrarPestana(pestanaActiva);
+  } catch (error) {
+    console.log("No se pudo aplicar la sincronización:", error.message);
+  } finally {
+    modalSincronizar.style.display = "none";
+    diffPendiente = null;
+    operacionEnCurso = false;
+  }
+});
+
+document.getElementById("btn-cancelar-sincronizar").addEventListener("click", () => {
+  modalSincronizar.style.display = "none";
+  diffPendiente = null;
 });

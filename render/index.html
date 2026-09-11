@@ -63,6 +63,7 @@
         <button id="btn-editar-cliente">Editar</button>
         <button id="btn-volver">← Volver</button>
         <button id="btn-subir-archivo"> Subir archivo</button>
+        <button id="btn-sincronizar-archivos">Sincronizar con Drive</button>
         <h2 id="detalle-nombre"></h2>
         <p id="detalle-id"></p>
 
@@ -78,6 +79,16 @@
             <p>¿Seguro que quieres borrar este cliente de forma <strong>permanente</strong>? Esta acción no se puede deshacer.</p>
             <button id="btn-confirmar-borrado">Sí, borrar</button>
             <button id="btn-cancelar-borrado">Cancelar</button>
+        </div>
+    </div>
+
+    <div id="modal-sincronizar" style="display: none;">
+        <div id="modal-sincronizar-contenido">
+            <p>Cambios detectados en Drive:</p>
+            <div id="diff-info"></div>
+            <div id="diff-datos"></div>
+            <button id="btn-confirmar-sincronizar">Aplicar cambios</button>
+            <button id="btn-cancelar-sincronizar">Cancelar</button>
         </div>
     </div>
 

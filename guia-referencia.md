@@ -627,9 +627,141 @@ try { /* ... */ } finally { operacionEnCurso = false; }
 3. **Desajuste de firma entre capas al refactorizar**: al quitar `tipoPestana` de `eliminarArchivo()` en `drive.js`, hay que actualizarlo en LAS 4 capas (`drive.js`, `preload.js`, `main.js`, `render.js`) — dejar una sola capa desactualizada no da un error claro; JS asigna argumentos por posición sin quejarse, así que un parámetro sobrante/faltante desplaza silenciosamente los siguientes (ej: `idCarpetaRaiz` recibiendo por error el valor de `tipoPestana`, generando un error confuso de "carpeta no encontrada" que no menciona el verdadero problema).
 4. **Procesos de Electron "fantasma"**: si la app no se cierra limpiamente (crash silencioso, cerrar solo la ventana), puede quedar un proceso `electron.exe` de fondo ejecutando código VIEJO, aunque el archivo en disco ya esté corregido — genera errores que no coinciden con el código que se está mirando. Diagnóstico: Administrador de tareas → pestaña Detalles/Procesos → buscar más de un `electron.exe` → finalizar todos → volver a correr `npm start`.
 
----
+### Bug de diseño: `clientes.json` es la única fuente de verdad — no hay sincronización con Drive
+Detectado al notar que una carpeta de cliente recién creada aparece vacía en Drive (comportamiento esperado: `crearCarpetaCliente()` solo crea la carpeta, no sube nada). El problema real es más de fondo: **la app nunca le pregunta a Drive qué archivos existen realmente** — todo lo que muestra sale de `archivosInfo`/`archivosDatos` en `clientes.json`, que solo se actualiza cuando la subida pasa por `subirArchivoLocal()`. Un archivo subido directamente desde la interfaz web de Drive (fuera de la app) queda invisible y no gestionable para la app: existe físicamente, pero no aparece en ninguna pestaña ni se puede borrar desde la UI (`eliminarArchivo()` busca por `idArchivo` dentro de esos dos arreglos, y ese archivo no está en ninguno).
 
-## 🛠️ Entorno de desarrollo — Troubleshooting (Windows)
+**Solución elegida: convertir las pestañas en subcarpetas físicas reales en Drive.** Antes había una sola carpeta plana por cliente (`idCarpeta`); ahora cada cliente tiene una carpeta contenedora + dos subcarpetas fijas ("Información del cliente" y "Datos añadidos"). Esto resuelve de raíz una ambigüedad de diseño: cuando se detecte un archivo "nuevo" en Drive que no está en el JSON, no hace falta preguntar a qué pestaña pertenece — la subcarpeta en la que Drive lo reporta ya lo dice.
+
+**Plan de 4 cambios:**
+1. **`crearCarpetaCliente()` refactorizada** — se extrajo el patrón "buscar si existe, si no crear" (que antes estaba inline) a una función auxiliar reutilizable `buscarOCrearCarpeta(nombre, idPadre)`, usada ahora tres veces: una para la carpeta del cliente (padre: `idCarpetaRaiz`) y dos para las subcarpetas (padre: el id de la carpeta del cliente recién creada). Devuelve `{ idCarpetaCliente, idCarpetaInfo, idCarpetaDatos }` en vez de un solo id.
+   ```js
+   async function buscarOCrearCarpeta(nombre, idPadre) {
+     const drive = google.drive({ version: "v3", auth: oAuth2Client });
+     const busqueda = await drive.files.list({
+       q: `'${idPadre}' in parents and name = '${nombre}' and mimeType = 'application/vnd.google-apps.folder'`,
+       fields: "files(id, name)",
+     });
+     if (busqueda.data.files.length > 0) return busqueda.data.files[0].id;
+     const nuevaCarpeta = await drive.files.create({
+       requestBody: { name: nombre, mimeType: "application/vnd.google-apps.folder", parents: [idPadre] },
+       fields: "id",
+     });
+     return nuevaCarpeta.data.id;
+   }
+
+   async function crearCarpetaCliente(nombre, identificacion, tipoIdentificacion, idCarpetaRaiz) {
+     const nombreCarpeta = `${nombre} - ${tipoIdentificacion} - ${identificacion}`;
+     const idCarpetaCliente = await buscarOCrearCarpeta(nombreCarpeta, idCarpetaRaiz);
+     const idCarpetaInfo = await buscarOCrearCarpeta("Información del cliente", idCarpetaCliente);
+     const idCarpetaDatos = await buscarOCrearCarpeta("Datos añadidos", idCarpetaCliente);
+     return { idCarpetaCliente, idCarpetaInfo, idCarpetaDatos };
+   }
+   ```
+2. **`crearCliente()` — TERMINADO**: desestructura el resultado de `crearCarpetaCliente()` y guarda los tres campos en `clienteNuevo`, reemplazando el campo viejo `idCarpeta`.
+   ```js
+   const { idCarpetaCliente, idCarpetaInfo, idCarpetaDatos } =
+     await crearCarpetaCliente(nombre, identificacion, tipoIdentificacion, idCarpetaRaiz);
+
+   const clienteNuevo = {
+     UUID: randomUUID(), nombre, tipoIdentificacion, identificacion, descripcionCaso,
+     archivosInfo: [], archivosDatos: [], misiones: [], estado: "activo",
+     idCarpetaCliente, idCarpetaInfo, idCarpetaDatos,
+   };
+   ```
+3. **`subirArchivoLocal()` — TERMINADO**: decide la subcarpeta destino según `tipoPestana` antes de subir.
+   ```js
+   let idCarpetaDestino;
+   if (tipoPestana === "info") idCarpetaDestino = listaClientes[posicion].idCarpetaInfo;
+   else idCarpetaDestino = listaClientes[posicion].idCarpetaDatos;
+   // ...
+   parents: [idCarpetaDestino], // en vez de [listaClientes[posicion].idCarpeta]
+   ```
+4. **Vista espejo — TERMINADA a nivel de lógica**, todas las funciones en `archivos-local.js`. No es un `pull` automático que sobreescribe el JSON en silencio, sino un `fetch` bajo demanda que muestra el diff al admin antes de aplicar nada:
+   ```js
+   // Lista los archivos reales de una carpeta de Drive
+   async function listarArchivosDeCarpeta(idCarpeta) {
+     const drive = google.drive({ version: "v3", auth: oAuth2Client });
+     const resultado = await drive.files.list({
+       q: `'${idCarpeta}' in parents and trashed = false`,
+       fields: "files(id, name)",
+     });
+     return resultado.data.files;
+   }
+
+   // Compara archivos reales de Drive (id, name) contra los del JSON (idArchivo, nombre)
+   function compararArchivos(archivosDrive, archivosJson) {
+     const nuevos = archivosDrive.filter((archivoDrive) => {
+       const existeEnJson = archivosJson.some((archivoJson) => archivoJson.idArchivo === archivoDrive.id);
+       return !existeEnJson;
+     });
+     const faltantes = archivosJson.filter((archivoJson) => {
+       const faltaEnJson = archivosDrive.some((archivoDrive) => archivoDrive.id === archivoJson.idArchivo);
+       return !faltaEnJson;
+     });
+     return { nuevos, faltantes };
+   }
+
+   // Orquesta ambas subcarpetas de un cliente y devuelve los dos diffs juntos
+   async function sincronizarArchivosCliente(UUID, idCarpetaRaiz) {
+     const listaClientes = await obtenerClientesJson(idCarpetaRaiz);
+     const posicion = listaClientes.findIndex((cliente) => cliente.UUID === UUID);
+     if (posicion === -1) throw new Error("No se encontró un cliente con ese UUID.");
+     const cliente = listaClientes[posicion];
+
+     const archivosDriveInfo = await listarArchivosDeCarpeta(cliente.idCarpetaInfo);
+     const archivosDriveDatos = await listarArchivosDeCarpeta(cliente.idCarpetaDatos);
+     const diffInfo = compararArchivos(archivosDriveInfo, cliente.archivosInfo);
+     const diffDatos = compararArchivos(archivosDriveDatos, cliente.archivosDatos);
+
+     return { info: diffInfo, datos: diffDatos };
+   }
+
+   // Aplica al JSON los cambios que el admin confirme, tras volver a pedir el diff fresco
+   async function aplicarSincronizacion(UUID, idCarpetaRaiz) {
+     const { info, datos } = await sincronizarArchivosCliente(UUID, idCarpetaRaiz);
+     const listaClientes = await obtenerClientesJson(idCarpetaRaiz);
+     const posicion = listaClientes.findIndex((cliente) => cliente.UUID === UUID);
+     const cliente = listaClientes[posicion];
+
+     const nuevosInfoConvertidos = info.nuevos.map((a) => ({ nombre: a.name, idArchivo: a.id }));
+     const nuevosDatosConvertidos = datos.nuevos.map((a) => ({ nombre: a.name, idArchivo: a.id }));
+
+     cliente.archivosInfo = cliente.archivosInfo
+       .filter((archivo) => !info.faltantes.some((f) => f.idArchivo === archivo.idArchivo))
+       .concat(nuevosInfoConvertidos);
+     cliente.archivosDatos = cliente.archivosDatos
+       .filter((archivo) => !datos.faltantes.some((f) => f.idArchivo === archivo.idArchivo))
+       .concat(nuevosDatosConvertidos);
+
+     await actualizarClientesJson(listaClientes, idCarpetaRaiz);
+     return cliente;
+   }
+   ```
+   **Falta solo**: exponer `sincronizarArchivosCliente()` (para mostrar el diff) y `aplicarSincronizacion()` (para confirmarlo) vía IPC en `main.js`/`preload.js`, y construir la UI que muestre el diff y deje confirmar.
+
+**Clientes de prueba con la estructura vieja (plana)**: se van a borrar por ser solo datos de prueba — no hace falta escribir lógica de migración.
+
+**⚠️ Limitación estructural descubierta al probar (afecta directamente a la "vista espejo") — DOCUMENTADA, arreglo pospuesto a 1.1**: con el scope `drive.file` (elegido a propósito para evitar la auditoría CASA Tier 2 — ver sección de `autenticar()`/scope más abajo), la app **no puede ver archivos que no haya creado ella misma**. No es un bug de código ni un error de permisos corregible: es el diseño intencional del scope. Un archivo subido manualmente desde la interfaz web de `drive.google.com` es, para la API, invisible — `drive.files.list` no lo incluye en los resultados, sin lanzar ningún error (a diferencia de acceder a él por ID directo, que sí da 404). Se confirmó probando en vivo: se subió `images.jpg` manualmente a la subcarpeta "Información del cliente" de un cliente de prueba, y `sincronizarArchivosCliente()` devolvió el diff vacío — sin errores en consola, sin errores en Drive, el archivo simplemente no aparece en la respuesta de la API.
+
+**Qué parte de la vista espejo queda afectada**: la detección de `nuevos` (archivos que aparecen en Drive sin estar en `clientes.json`) es **imposible** con `drive.file`, sin excepción — salvo que el usuario conceda acceso a un archivo específico a través de un flujo de Picker (por eso el Picker sí puede acceder a archivos externos: elegirlo en el selector es lo que le concede el acceso puntual). La detección de `faltantes` (archivos que la app SÍ creó, borrados después manualmente desde Drive) **sigue funcionando sin problema**, porque esos archivos entraron al alcance de `drive.file` en el momento en que la app los creó.
+
+**Decisión**: documentar la limitación con sus condiciones (esta nota) y posponer el ajuste de la función a la versión 1.1, junto con el resto de pendientes — no se toca más por ahora. Opciones a evaluar en 1.1: acotar la vista espejo para que solo detecte `faltantes` (la mitad que sí es viable), o ampliar el scope (lo que reintroduce la auditoría CASA que se quería evitar desde el principio).
+
+### Google Picker API — `abrirPicker()` completo, PAUSADO como "DLC" post-1.0 por bloqueo de arquitectura de Client ID
+Para apps de escritorio (no web), Google tiene un flujo distinto al Picker embebido en navegador: se abre una URL especial en el navegador del sistema (mismo mecanismo que `autenticar()`, con `shell.openExternal`), el usuario elige el archivo dentro de la página de Google, y Google redirige de vuelta con `picked_file_ids` en la URL — reutilizando el mismo servidor `http.createServer` del loopback flow ya existente. Parámetros nuevos requeridos en la `authUrl`: `prompt=consent` y `trigger_onepick=true`. El scope para el Picker en apps de escritorio debe ser ÚNICAMENTE `drive.file`, sin combinar con otros scopes.
+
+**`app/drive/archivos-picker.js` — `abrirPicker()` implementada y correcta**: genera `authUrl` con `generateAuthUrl({ access_type, scope, trigger_onepick: "true", prompt: "consent" })`, levanta servidor local en :3000 (callback `async`), lee `code` y `picked_file_ids` de `urlParams.searchParams`, canjea el código por token (`await oAuth2Client.getToken(code)`), y hace `resolve({ tokens, fileIds: fileIdsArray })` — con `try/catch` alrededor del intercambio de token para que un `code` inválido haga `reject(error)` en vez de colgar la Promise para siempre. Usa `require`/`module.exports` (no `import`/`export` — este archivo vive en el proceso main de Electron, no en el navegador).
+
+**⚠️ Duda del `redirect_uri` — RESUELTA, y peor de lo esperado**: la documentación oficial del Picker sí exige que el `redirect_uri` sea una URL HTTPS pública real — confirmado, no es un caso donde `localhost` funcione "en la práctica" pese a lo documentado. Y hay una segunda restricción que no se había detectado: **los Client ID tipo "Desktop app" en Google solo aceptan `http://localhost` como redirect_uri — no aceptan URLs HTTPS públicas personalizadas, ni siquiera para el Picker.** Esto choca directamente con el requisito anterior.
+
+**Solución identificada (no implementada todavía)**: crear un **segundo OAuth Client ID, tipo "Web application"**, exclusivo para el flujo del Picker, con una página de redirect estática alojada en **GitHub Pages** registrada como su redirect URI autorizado. Esa página sería un HTML mínimo con un script que lea `window.location.search` y redirija el navegador a `http://localhost:3000` con los mismos parámetros (`code` + `picked_file_ids`) pegados — el redirect ocurre del lado del navegador del propio usuario, así que no hace falta exponer la máquina local a internet (no aplica el patrón de Cloudflare Tunnel usado con el bot de WhatsApp). En `archivos-picker.js`, esto implicaría instanciar un `OAuth2Client` nuevo con las credenciales del cliente Web (no reusar el `oAuth2Client` de `auth.js`, que sigue usándose para el login normal de Drive con el Client ID "Desktop app").
+
+**Decisión: pausado como "DLC"** — un apartado aparte para después de terminar la versión 1.0, no bloqueante para el resto del proyecto. `abrirPicker()` queda tal cual, lista para conectarse el día que se resuelva el Client ID Web + la página de GitHub Pages.
+- API Key de Picker generada y guardada en `app/api-key-picker.json` (`{ "apiKey": "..." }`), agregada a `.gitignore`. Restringida por API (solo Google Picker API), sin restricción de aplicación (no aplica bien a apps de escritorio — ni "referrers HTTP" ni "huella de paquete" tienen sentido aquí).
+- Nota importante: para el flujo de escritorio específicamente, la API Key **no se usa en el código en absoluto** — solo hace falta `client_id`/`client_secret` (ya existentes) + habilitar la Picker API en Cloud Console. La key se guardó de todas formas, por si el flujo real termina necesitándola o cambia de enfoque.
+
+### Proyecto subido a GitHub (público)
+Repositorio creado con GitHub CLI (`gh repo create junta-abogados --public --source=. --remote=origin --push`), pensado como pieza de portafolio para HV. Verificado con `git status` antes del commit que ningún archivo sensible (`credenciales.json`, `token-google.json`, `api-key-picker.json`, `node_modules/`) apareciera en la lista de "Changes to be committed" — `.gitignore` funcionando correctamente desde el primer commit.
 
 ### ¿Qué es el PATH?
 Una lista de carpetas donde el sistema operativo busca automáticamente los programas que escribes en la terminal (`npm`, `node`, `nvm`, etc.). Si un programa está instalado pero su carpeta no está en el PATH, el sistema dice "no se reconoce como un comando" aunque el archivo exista.
@@ -704,7 +836,7 @@ Los cambios **no aplican a terminales ya abiertas** — hay que cerrarlas y abri
 - **Trío CRUD de papelera completo**: `moverAPapelera(UUID, idCarpetaRaiz)`, `restaurarCliente(UUID, idCarpetaRaiz)`, `borrarClientePermanente(UUID, idCarpetaRaiz)` (esta última sí borra la carpeta real en Drive con `drive.files.delete()`, además de sacar al cliente del arreglo con `.filter()`).
 - `actualizarCliente()` migrado completo a buscar por `UUID` (antes buscaba por `identificacion + tipoIdentificacion`), ahora permite actualizar `nombre`, `descripcionCaso`, `tipoIdentificacion`, `identificacion` (los 4 con el patrón `||` para actualizaciones parciales).
 
-### Estructura actual del objeto cliente (post-migración a UUID)
+### Estructura del objeto cliente (post-migración a UUID + subcarpetas físicas)
 ```js
 {
   UUID: "...",              // crypto.randomUUID() — identificador interno, nunca cambia
@@ -716,9 +848,12 @@ Los cambios **no aplican a terminales ya abiertas** — hay que cerrarlas y abri
   archivosDatos: [],
   misiones: [],
   estado: "activo",          // "activo" | "papelera" | "en espera"
-  idCarpeta: "...",          // id de la carpeta del cliente en Drive
+  idCarpetaCliente: "...",   // id de la carpeta contenedora del cliente en Drive
+  idCarpetaInfo: "...",      // id de la subcarpeta "Información del cliente"
+  idCarpetaDatos: "...",     // id de la subcarpeta "Datos añadidos"
 }
 ```
+Reemplaza el campo único `idCarpeta` de versiones anteriores (ver sección "Bug de diseño: clientes.json es la única fuente de verdad" más abajo).
 
 ### Completado (continuación, sesión de conexión UI ↔ backend)
 - **CRUD completo de clientes conectado a la UI real**, de punta a punta, probado y funcionando:
@@ -745,19 +880,26 @@ Los cambios **no aplican a terminales ya abiertas** — hay que cerrarlas y abri
 - **Borrado de archivos completo**: botón "✕" por archivo en la lista de cada pestaña, con `boton.disabled` + bandera `operacionEnCurso` para prevenir condiciones de carrera. `eliminarArchivo()` busca en ambos arreglos (no depende de `tipoPestana`), y tolera 404 de Drive (archivo ya borrado) sin bloquear la limpieza de la referencia en `clientes.json`.
 - Depurado un bug largo con varias causas simultáneas: condición de carrera entre subir/borrar concurrentes, desajuste de firma de función entre las 4 capas tras un refactor, y un proceso de Electron fantasma ejecutando código viejo — todo documentado arriba en detalle para referencia futura.
 
+### Completado (esta sesión)
+- Proyecto publicado en GitHub (público, para portafolio/HV)
+- **`abrirPicker()` implementada y correcta** en `app/drive/archivos-picker.js` (ver sección del Picker más arriba) — pausada como "DLC" post-1.0 por el bloqueo de arquitectura de Client ID (Desktop app no admite redirect_uri HTTPS público)
+- **Rediseño de subcarpetas físicas TERMINADO y conectado de punta a punta**: `crearCarpetaCliente()` + `buscarOCrearCarpeta()`, `crearCliente()`, `subirArchivoLocal()`, vista espejo completa (`listarArchivosDeCarpeta`, `compararArchivos`, `sincronizarArchivosCliente`, `aplicarSincronizacion`), IPC en `main.js`/`preload.js`, y modal en `detalle.js` (`#modal-sincronizar`, `renderizarDiff()`, botones confirmar/cancelar) — ver sección dedicada más arriba
+- **Limitación estructural de `drive.file` descubierta al probar en vivo, documentada** (ver sección dedicada más arriba): la detección de "nuevos" en la vista espejo es imposible con este scope — archivos subidos manualmente a Drive son invisibles para la API. Arreglo pospuesto a 1.1
+
 ### Pendiente / próximos pasos
-1. Selector de Google Drive (Google Picker API) — el otro flujo de subida, para elegir archivos que ya existen en el Drive del admin (pendiente desde el diseño original, no iniciado)
-2. Aplicar el mismo patrón de `operacionEnCurso` + `disabled` a otros botones async que podrían sufrir el mismo problema de doble-click (ej. "Borrar permanente" en la papelera, "Confirmar borrado" del modal) — no es urgente, pero es la misma clase de bug
-3. Descarga de archivos (mostrar → botón de descargar), mencionado como mejora futura al decidir el flujo de "mostrar primero, descargar después"
-4. `archivos-picker.js` — reservado para cuando se construya el Picker
-5. `archivos-formulario` (nombre pendiente de definir) — lógica para cuando el futuro formulario web permita subir archivos del cliente directo a Drive; depende de que el formulario web exista primero
+1. **1.1 — Vista espejo**: decidir cómo ajustar la función dada la limitación de `drive.file` (acotarla a solo detectar `faltantes`, la única mitad viable, o evaluar ampliar el scope con la auditoría CASA que eso implica)
+2. Borrar los clientes de prueba con la estructura vieja (plana)
+3. Aplicar el patrón de `operacionEnCurso` + `disabled` a otros botones async con el mismo riesgo de doble-click (papelera, modal de borrado)
+4. Descarga de archivos (mostrar → botón de descargar)
+5. `archivos-formulario` (nombre pendiente de definir) — depende de que el formulario web exista primero
 6. CSS: estilizar toda la UI (sigue con estilos mínimos)
 7. Notario: falta el toggle de colapsar/expandir la ventana flotante al hacer click en el header
 8. Notificaciones por correo/calendario (ligadas al sistema de misiones)
-9. Formulario web (desde cero) — cuando exista, reutiliza `crearCliente()` tal cual, solo cambia el "Extract" (de dónde vienen los datos)
-10. Optimización a futuro (no urgente): cada acción vuelve a pedir la lista completa de clientes a Drive vía `iniciar()`, generando lentitud perceptible
+9. Formulario web (desde cero) — reutiliza `crearCliente()` tal cual, solo cambia el "Extract"
+10. Optimización a futuro (no urgente): cada acción vuelve a pedir la lista completa de clientes a Drive vía `iniciar()`
 11. Pendiente menor: unificar `resource` → `requestBody` en `obtenerCarpetaRaiz()`
-12. (Al final del proyecto) Publicar la app en Google Auth Platform: comprar dominio, alojar página de inicio + política de privacidad, pasar verificación de Google — con `drive.file` ya no requiere auditoría CASA Tier 2, solo verificación de marca/identidad
+12. **DLC post-1.0**: conectar `abrirPicker()` a la UI — requiere crear un Client ID tipo "Web application" + página de redirect en GitHub Pages (ver sección del Picker más arriba)
+13. (Al final del proyecto) Publicar la app en Google Auth Platform: comprar dominio, alojar página de inicio + política de privacidad, pasar verificación de Google
 
 ### Preferencia de aprendizaje del usuario
 Mentor, no solución directa: explicar concepto → dar esqueleto con huecos → pistas si se traba → nunca código completo salvo configuración repetitiva sin valor pedagógico.

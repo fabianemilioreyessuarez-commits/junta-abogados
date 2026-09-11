@@ -1,13 +1,21 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+
 const path= require("path");
+
 const {obtenerToken} = require("./auth.js");
+
 const {obtenerCarpetaRaiz, obtenerClientesJson, 
        crearCliente, crearCarpetaCliente, 
        actualizarClientesJson, actualizarCliente,
        moverAPapelera, restaurarCliente, borrarClientePermanente,
        agregarMision, eliminarMision} = require ("./drive/clientes.js");
-const { subirArchivoLocal, eliminarArchivoLocal } = require ("./drive/archivos-local.js");
-// const { fileURLToPath } = require("url"); no sé por qué la tengo aquí, pero no quiero borrarla
+
+const { subirArchivoLocal, eliminarArchivoLocal, 
+        sincronizarArchivosCliente, aplicarSincronizacion } = require("./drive/archivos-local.js");
+
+const { abrirPicker } = require("./drive/archivos-picker.js");
+
+const { descargarArchivo } = require("./drive/archivos-descarga.js");
 
 let idCarpetaRaiz;
 
@@ -79,15 +87,42 @@ ipcMain.handle("eliminarArchivoLocal", async (event, UUID, idArchivo) => {
   return await eliminarArchivoLocal(UUID, idArchivo, idCarpetaRaiz);
 });
 
+ipcMain.handle("sincronizarArchivosCliente", async (event, UUID) => {
+  return await sincronizarArchivosCliente(UUID, idCarpetaRaiz);
+});
+
+ipcMain.handle("aplicarSincronizacion", async (event, UUID) => {
+  return await aplicarSincronizacion(UUID, idCarpetaRaiz);
+});
+
+ipcMain.handle("descargarArchivo", async (event, idArchivo, nombre) => {
+  const resultado = await dialog.showSaveDialog({
+    defaultPath: nombre,
+  });
+
+  if (resultado.canceled) {
+    return null;
+  }
+  return await descargarArchivo(idArchivo, resultado.filePath);
+});
+
 app.whenReady().then(async () => {
+
   await obtenerToken();
-  
+
   idCarpetaRaiz = await obtenerCarpetaRaiz();
   console.log("ID de la carpeta raíz:", idCarpetaRaiz);
 
   createWindow();
 
   console.log("todo bien");
+
+  // try {
+  //   const resultado = await abrirPicker();
+  //   console.log("Picker OK:", resultado);}
+  // catch (error) {
+  //   console.error("Picker falló:", error);
+  // }
 });
 
 /*Nombre original del json con la autentificacíon= client_secret_789450277942-oq9udtoqatnk1ti27m8e0uqu17ieh75h.apps.googleusercontent.com*/

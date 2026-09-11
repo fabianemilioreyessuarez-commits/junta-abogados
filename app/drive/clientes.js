@@ -73,7 +73,8 @@ async function crearCliente(datosCliente, idCarpetaRaiz) {
     throw new Error("Ya existe un cliente con esa identificación.");
   }
 
-  const idCarpeta = await crearCarpetaCliente(nombre, identificacion, tipoIdentificacion, idCarpetaRaiz);
+  const { idCarpetaCliente, idCarpetaInfo, idCarpetaDatos } = 
+  await crearCarpetaCliente(nombre, identificacion, tipoIdentificacion, idCarpetaRaiz);
 
   const clienteNuevo = {
     UUID: randomUUID(),
@@ -85,7 +86,9 @@ async function crearCliente(datosCliente, idCarpetaRaiz) {
     archivosDatos: [],
     misiones: [],
     estado: "activo", // pensadolo un poco, quizas en algun futuro ponga más variables de texto con significado.
-    idCarpeta,
+    idCarpetaCliente,
+    idCarpetaInfo,
+    idCarpetaDatos,
   };
 
   listaClientes.push(clienteNuevo);
@@ -93,17 +96,17 @@ async function crearCliente(datosCliente, idCarpetaRaiz) {
   return clienteNuevo;
 }
 
-async function crearCarpetaCliente(nombre, identificacion, tipoIdentificacion, idCarpetaRaiz) {
+async function buscarOCrearCarpeta(nombre, idPadre) {
   const drive = google.drive({ version: "v3", auth: oAuth2Client });
-
-  const nombreCarpeta = `${nombre} - ${tipoIdentificacion} - ${identificacion}`;
+  
+  const nombreCarpeta = `${nombre}`;
 
   const busqueda = await drive.files.list({
-    q: `'${idCarpetaRaiz}' in parents and name = '${nombreCarpeta}' and mimeType = 'application/vnd.google-apps.folder'`,
+    q: `'${idPadre}' in parents and name = '${nombre}' and mimeType = 'application/vnd.google-apps.folder'`,
     fields: "files(id, name)",
   });
 
-  if (busqueda.data.files.length > 0) {
+    if (busqueda.data.files.length > 0) {
     return busqueda.data.files[0].id;
   }
 
@@ -111,12 +114,23 @@ async function crearCarpetaCliente(nombre, identificacion, tipoIdentificacion, i
     requestBody: {
       name: nombreCarpeta,
       mimeType: "application/vnd.google-apps.folder",
-      parents: [idCarpetaRaiz],
+      parents: [idPadre],
     },
     fields: "id",
   });
 
   return nuevaCarpeta.data.id;
+}
+
+async function crearCarpetaCliente(nombre, identificacion, tipoIdentificacion, idCarpetaRaiz) {
+  const nombreCarpeta = `${nombre} - ${tipoIdentificacion} - ${identificacion}`;
+
+  const idCarpetaCliente = await buscarOCrearCarpeta(nombreCarpeta, idCarpetaRaiz);
+
+  const idCarpetaInfo = await buscarOCrearCarpeta("Información del cliente", idCarpetaCliente);
+  const idCarpetaDatos = await buscarOCrearCarpeta("Datos añadidos", idCarpetaCliente);
+
+  return { idCarpetaCliente, idCarpetaInfo, idCarpetaDatos };
 }
 
 async function actualizarClientesJson(listaClientes, idCarpetaRaiz) {
